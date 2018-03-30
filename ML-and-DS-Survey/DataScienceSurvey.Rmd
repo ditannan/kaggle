@@ -1,0 +1,75 @@
+---
+title: "Kaggle ML and data science survey"
+output: html_notebook
+---
+
+调查了2017年超过16000名数据科学家。
+
+载入包
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+library(data.table)
+library(dplyr)
+library(ggplot2)
+```
+
+读取数据
+```{r}
+# 问卷数据
+responses <- fread('multipleChoiceResponses.csv')
+```
+查看数据情况
+```{r}
+table(responses$Country)
+```
+将中国统一
+```{r}
+responses$Country <- ifelse(responses$Country == 'Republic of China' | 
+                            responses$Country == "People 's Republic of China",
+                            'China', responses$Country)
+```
+
+```{r}
+responses$Country %in% c('China') %>% table
+```
+
+# 描述性分析
+```{r}
+df_country_age <- responses %>% 
+  group_by(Country) %>% 
+  summarise(AgeMedian = median(Age, na.rm = T)) %>% 
+  arrange(desc(AgeMedian))
+df_country_age
+```
+
+```{r}
+head(df_country_age, 10) %>% 
+  ggplot(aes(reorder(Country, AgeMedian), AgeMedian)) +
+  geom_bar(aes(fill = Country), stat = 'identity') +
+  geom_text(aes(label = AgeMedian), hjust = 1.5, colour = 'white') +
+  coord_flip() +
+  labs(x = 'Country', y = 'Age') +
+  theme_minimal() +
+  scale_fill_brewer(palette = 'Set3') +
+  theme(legend.position = 'none') ## 移除图例
+```
+将上述封装成函数
+```{r}
+Bar_plot <- function(data, xname, yname, xlab, ylab) {
+  xname <- quo(xname)
+  yname <- quo(yname)
+  data %>% 
+    ggplot(aes(reorder(!!xname, !!yname), !!yname)) +
+    geom_bar(aes(fill = !!xname), stat = 'identity') +
+    geom_text(aes(label = !!yname), hjust = 1.5, colour = 'white') +
+    coord_flip() +
+    labs(x = xlab, y = ylab) +
+    theme_minimal() +
+    scale_fill_brewer(palette = 'Set3') +
+    theme(legend.position = 'none') ## 移除图例
+}
+```
+
+```{r}
+Bar_plot(head(df_country_age, 10), Country, AgeMedian, 'Country', 'Age')
+```
+

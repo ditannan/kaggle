@@ -1,0 +1,248 @@
+---
+title: "Why they left"
+output: html_notebook
+---
+
+# 载入包
+```{r loading-packages, warning=FALSE, message=FALSE}
+library(plyr)
+library(tidyverse)
+library(skimr)
+library(DT)
+library(caret)
+library(rpart)
+library(e1071)
+library(pROC)
+library(Rmisc)
+```
+
+# 读取数据
+```{r read-data}
+hr <- read_csv('HR_comma_sep.csv')
+```
+
+# 描述性分析
+```{r left-p}
+# 离职情况
+table(hr$left) %>% prop.table()
+```
+
+简单描述
+```{r desc}
+hr %>% 
+  skim()
+summary(hr)
+```
+
+将y转化为因子型
+```{r left-factor}
+hr$left <- as.factor(hr$left)
+```
+
+# 绘图查看
+是否离职和满意度箱式图
+```{r box_sat}
+box_sat <- hr %>% 
+  ggplot(aes(left, satisfaction_level, fill = left)) +
+  stat_boxplot(geom = 'errorbar') +
+  geom_boxplot() +
+  theme_bw() +
+  labs(x = 'Left', y = 'Satisfaction level')
+box_sat
+```
+
+离职员工的满意度更低些。
+```{r ttest_sat}
+t.test(satisfaction_level ~ left, data = hr)
+```
+
+绩效评估
+```{r box_eva}
+box_eva <- hr %>% 
+  ggplot(aes(left, last_evaluation, fill = left)) +
+  geom_boxplot() +
+  theme_bw() +
+  labs(x = 'left', 'last_evaluation')
+box_eva
+  
+```
+已经离职的员工绩效更好些。
+
+每月工作时长
+```{r box_time}
+box_time <- hr %>% 
+  ggplot(aes(left, time_spend_company, fill = left)) +
+  geom_boxplot()
+box_time
+```
+
+离职员工工作年限更长。
+
+每月工作时长
+```{r box_mon}
+box_mon <- hr %>% 
+  ggplot(aes(left, average_montly_hours, fill = left)) +
+  geom_boxplot() +
+  theme_bw() 
+box_mon
+```
+
+离职的平均每个月工作时长更长。
+
+将上述四个图绘制到一张图里面：
+```{r multi-plot}
+multiplot(box_eva, box_mon, box_time, box_sat, cols = 2)
+```
+
+离职和员工参与项目个数情况
+```{r num_project_factor}
+hr$number_project <- as.factor(hr$number_project)
+```
+
+```{r bar-project}
+bar_pro <- hr %>% 
+  ggplot(aes(number_project, fill = left)) +
+  geom_bar(position = 'fill') +
+  theme_bw()
+bar_pro
+```
+
+5年内是否升值
+```{r bar-5year}
+bar_5year <- hr %>% 
+  ggplot(aes(as.factor(promotion_last_5years), fill = left)) +
+  geom_bar(position = 'fill')
+bar_5year
+```
+
+没有升职的员工更容易离职。
+
+薪资
+```{r bar-salary}
+bar_sal <- hr %>% 
+  ggplot(aes(salary, fill = left)) +
+  geom_bar(position = 'fill') +
+  scale_x_discrete(limits = c('low', 'medium', 'high'))
+bar_sal
+```
+
+```{r multi-bar}
+multiplot(bar_5year, bar_pro, bar_sal, cols = 3)
+```
+
+# 建模预测
+## 提取优秀员工
+```{r}
+hr_model <- hr %>% 
+  filter(
+    last_evaluation >= 0.7 | 
+      time_spend_company >= 4 | 
+      as.numeric(number_project) > 5
+  )
+```
+
+## 决策树
+
+### 定义交叉验证方法
+5折交叉验证
+```{r}
+train_control <- trainControl(method = 'cv', number = 5)
+```
+
+### 定义分层抽样
+```{r}
+set.seed(1234)
+# 保证训练集和测试集离职情况与原始数据集相似
+index <- createDataPartition(hr_model$left, p = 0.7, list = F)
+```
+
+### 选定测试集
+```{r}
+traindata <- hr_model[index, ]
+testdata <- hr_model[-index, ]
+```
+
+### 建模
+```{r}
+rpartmodel <- train(left ~ ., data = traindata, trControl = train_control, 
+                    method = 'rpart')
+```
+
+### 预测
+```{r}
+pred_rpart <- predict(rpartmodel, testdata[-7])
+table(pred_rpart, testdata$left)
+mean(pred_rpart == testdata$left)
+```
+
+## 朴素贝叶斯
+```{r}
+nbmodel <- train(left ~ ., data = traindata, 
+                 trControl = train_control, method = 'nb')
+pred_nb <- predict(nbmodel, testdata[-7])
+table(pred_nb, testdata$left)
+mean(pred_nb == testdata$left)
+```
+
+# 模型评估
+数值型预测值
+```{r}
+pred_rpart <- as.numeric(as.character(pred_rpart))
+pred_nb <- as.numeric(as.character(pred_nb))
+```
+
+```{r}
+roc_rpart <- roc(testdata$left, pred_rpart)
+```
+
+## 决策树ROC
+```{r}
+specificity <- roc_rpart$specificities
+sensitivity <- roc_rpart$sensitivities
+```
+
+
+```{r}
+p_rpart <- ggplot(data = NULL, aes(1 - specificity, sensitivity)) +
+  geom_line(colour = 'red') +
+  geom_abline() +
+  annotate('text', x = .4, y = .5, 
+           label = paste0('AUC=', round(roc_rpart$auc, 3))) +
+  theme_bw() +
+  labs(x = '1 - specificity', y = 'sensitivities')
+p_rpart
+```
+
+## 朴素贝叶斯ROC
+```{r}
+roc_nb <- roc(testdata$left, pred_nb)
+```
+
+```{r}
+specificity <- roc_nb$specificities
+sensitivity <- roc_nb$sensitivities
+```
+
+
+```{r}
+p_nb <- ggplot(data = NULL, aes(1 - specificity, sensitivity)) +
+  geom_line(colour = 'red') +
+  geom_abline() +
+  annotate('text', x = .4, y = .5, 
+           label = paste0('AUC=', round(roc_nb$auc, 3))) +
+  theme_bw() +
+  labs(x = '1 - specificity', y = 'sensitivities')
+p_nb
+```
+
+# 应用
+使用回归树模型预测分类的概率
+```{r}
+# 预测概率
+pred_end <- predict(rpartmodel, testdata[-7], type = 'prob')
+data_end <- cbind(round(pred_end, 3), pred_rpart)
+names(data_end) <- c('pred.0', 'pred.1', 'pred')
+# 生成交互式表格
+datatable(data_end)
+```
+
